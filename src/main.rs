@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, arg, command};
 use glob;
+use time::{self, format_description};
 
 #[derive(Parser)]
 #[command(name = "deputy")]
@@ -50,6 +51,48 @@ fn main() {
     }
 
     for path in paths {
-        println!("{}", path.display())
+        let metadata = match path.metadata() {
+            Ok(md) => md,
+            Err(e) => {
+                println!("Error reading metadata for {}: {}", path.display(), e);
+                continue;
+            }
+        };
+
+        if metadata.is_file() {
+            let modified = metadata.modified().unwrap();
+            let modified = time::OffsetDateTime::from(modified);
+            let date_format = format_description::parse("[year]-[month]-[day]").unwrap();
+            let date_prefix = modified.format(&date_format).unwrap();
+
+            if path
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with(&date_prefix)
+            {
+                println!("no changes: {}", path.display());
+                continue;
+            }
+
+            let new_name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|name| format!("{}__{}", date_prefix, name));
+
+            if let Some(new_name) = new_name {
+                let new_path = path.with_file_name(new_name);
+                if cli.dry_run {
+                    println!("old {}", path.display());
+                    println!("new {}\n", new_path.display());
+                } else {
+                    if let Err(e) = std::fs::rename(&path, &new_path) {
+                        println!("Error renaming {}: {}", path.display(), e);
+                        continue;
+                    }
+                }
+            }
+        }
     }
 }
